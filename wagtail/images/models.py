@@ -2,6 +2,8 @@ import hashlib
 import logging
 import os.path
 import time
+import willow
+
 from collections import OrderedDict
 from contextlib import contextmanager
 from io import BytesIO
@@ -47,6 +49,7 @@ IMAGE_FORMAT_EXTENSIONS = {
     "png": ".png",
     "gif": ".gif",
     "webp": ".webp",
+    "svg": ".svg",
 }
 
 
@@ -206,6 +209,12 @@ class WagtailImageFieldFile(models.fields.files.ImageFieldFile):
         The upstream ImageFieldFile calls a local function get_image_dimensions. In this implementation we've made get_image_dimensions
         a method to make it easier to override for Wagtail developers in the future.
         """
+        if self.name.endswith(".svg"):
+            """
+            SVG images have a fixed size of 100x100, until willow has
+            SVG support.
+            """
+            return 100, 100
         close = self.closed
         try:
             self.open()
@@ -223,6 +232,14 @@ class WagtailImageField(models.ImageField):
     """
 
     attr_class = WagtailImageFieldFile
+
+
+class SVGImageFile(willow.image.ImageFile):
+    """
+    Mock the willow interface for SVG files, until SVG support lands in Willow.
+    """
+
+    format_name = "svg"
 
 
 class AbstractImage(ImageFileMixin, CollectionMember, index.Indexed, models.Model):
@@ -535,7 +552,17 @@ class AbstractImage(ImageFileMixin, CollectionMember, index.Indexed, models.Mode
         start_time = time.time()
 
         try:
-            generated_image = filter.run(self, BytesIO())
+            if self.filename.endswith(".svg"):
+                """
+                For now we're just copying SVGs until we get an
+                implementation in Willow. We load a copy of the image
+                into a mock of an WillowImageFile for compatibility.
+                """
+                with open(self.file.path, "rb") as fh:
+                    svg = BytesIO(fh.read())
+                generated_image = SVGImageFile(svg)
+            else:
+                generated_image = filter.run(self, BytesIO())
 
             logger.debug(
                 "Generated '%s' rendition for image %d in %.1fms",

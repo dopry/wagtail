@@ -8,9 +8,10 @@ from django.core.validators import FileExtensionValidator
 from django.forms.fields import FileField, ImageField
 from django.template.defaultfilters import filesizeformat
 from django.utils.translation import gettext_lazy as _
+from xml.etree.cElementTree import iterparse, ParseError
 
-ALLOWED_EXTENSIONS = ["gif", "jpg", "jpeg", "png", "webp"]
-SUPPORTED_FORMATS_TEXT = _("GIF, JPEG, PNG, WEBP")
+ALLOWED_EXTENSIONS = ["gif", "jpg", "jpeg", "png", "webp", "svg"]
+SUPPORTED_FORMATS_TEXT = _("GIF, JPEG, PNG, WEBP, SVG")
 
 
 class WagtailImageField(ImageField):
@@ -146,11 +147,15 @@ class WagtailImageField(ImageField):
             f.content_type = image_format_name_to_content_type(f.image.format_name)
 
         except Exception as exc:
-            # Willow doesn't recognize it as an image.
-            raise ValidationError(
-                self.error_messages["invalid_image"],
-                code="invalid_image",
-            ) from exc
+            # add a workaround to handle svg images
+            try:
+                f.image = SVGImage(file)
+            except Exception as exc:
+                # Willow doesn't recognize it as an image.
+                raise ValidationError(
+                    self.error_messages["invalid_image"],
+                    code="invalid_image",
+                ) from exc
 
         if hasattr(f, "seek") and callable(f.seek):
             f.seek(0)
@@ -185,3 +190,42 @@ def image_format_name_to_content_type(image_format_name):
         return "image/webp"
     else:
         raise ValueError("Unknown image format name")
+
+
+class SVGImage(willow.image.ImageFile):
+    """
+    Implementation of PIL's Image interface for SVG images.
+    """
+    format_name = "svg"
+
+    def __init__(self, f):
+        super().__init__(f)
+        if not self.is_svg(f):
+            raise "Not a SVG file"
+
+    def is_svg(self, f):
+        """
+        Check if provided file is svg
+        """
+        f.seek(0)
+        tag = None
+        try:
+            for event, el in iterparse(f, ("start",)):
+                tag = el.tag
+                break
+        except ParseError:
+            pass
+        return tag == "{http://www.w3.org/2000/svg}svg"
+
+    def get_size(self):
+        """
+        Get the size of the image
+        """
+        return 100, 100
+
+    def get_frame_count(self):
+        """
+        Get the number of frames in the image
+        """
+        return 1
+
